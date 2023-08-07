@@ -1,0 +1,274 @@
+# -*- coding: utf-8 -*-
+"""
+KRS_Python_Sample_1
+KONDO KAGAKU CO.,LTD.
+2021/12/20
+"""
+
+import serial
+import time
+import RPi.GPIO as GPIO
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(23,GPIO.OUT)
+GPIO.output(23,GPIO.HIGH)
+
+#It operates by specifying the angle of the servo specified by the number.
+def krs_setPos_CMD(servo_id, pos):
+    
+    txCmd = [0x80 | servo_id,   #Add the ID number to the position command 0x80 to form a header.
+             pos >> 7 & 0x7f,   #Split position data into 2 bytes
+             pos & 0x7f]
+   
+    #コマンドを送信
+    krs.write(txCmd)
+    
+    #サーボからの返事を受け取る
+    #GPIO.output(23,GPIO.LOW)
+    rxCmd = krs.read(6)
+    print(rxCmd)
+    
+    #もしリスト何になにも入っていなかったら正常に受信できていないと判断    
+    if len(rxCmd) == 0:
+        return 0
+
+    #問題なければ返事を返す        
+    else:
+        
+        #受け取った2Byteの現在位置を1バイトのデータにまとめて戻り値にします
+        #※この現在位置は、サーボがポジションを受け取って動き出す前の現在位置です
+        return (rxCmd[4] << 7) + rxCmd[5]
+
+
+
+#サーボを脱力した状態にします    
+def krs_setFree_CMD(servo_id):
+    
+    #ポジション0送信すると脱力します
+    bl, Value = krs_setPos_CMD(servo_id, 0)
+    return Value
+    
+#サーボのストレッチ、スピード、電流値、温度を読み出します
+#現在位置を取得する場合は、getPos関数を使用してください
+#EEPROM(sc:0x00)の読み出しには対応していません
+#KRS-3301/3302は温度、電流回路が実装されていません
+
+def krs_getValue_CMD(servo_id, sc):
+   
+    txCmd = [0xA0 | servo_id,   #読み出しコマンド0xA0にＩＤ番号を足し合わせてヘッダにします
+             sc]                #sc（サブコマンド）により、読み出すパラメータを指定します
+   
+    #コマンドを送信
+    krs.write(txCmd)
+
+    #サーボからの返事を受け取る
+    rxCmd = krs.read(5)
+    
+    #もしリスト何になにも入っていなかったら正常に受信できていないと判断    
+    if len(rxCmd) == 0:
+        return 0
+
+    #問題なければ返事を返す
+    else:
+        return rxCmd[4]
+
+
+
+#サーボの現在位置を読み出します
+#サブコマンド0ｘ05により現在位置を読み出すことができますが、このコマンドはＩＣＳ3.6のみ対応しています
+#ICS3.5をご利用の場合は、getPos35関数を使用してください
+def krs_getPos36_CMD(servo_id):
+   
+    txCmd = [0xA0 | servo_id,   #読み出しコマンド0xA0にＩＤ番号を足し合わせてヘッダにします
+             0x05]              #sc（サブコマンド）により、現在位置を読み出します
+   
+    #コマンドを送信
+    krs.write(txCmd)
+
+    #サーボからの返事を受け取る
+    rxCmd = krs.read(6)
+    
+    #もしリスト何になにも入っていなかったら正常に受信できていないと判断    
+    if len(rxCmd) == 0:
+        return 0
+
+    #問題なければ返事を返す        
+    else:
+        
+        #読み出した2バイトのデータを１つのデータにまとめて戻り値とします
+        return (rxCmd[4] << 7) + rxCmd[5]
+
+
+#Read the current position of the servo Because ICS3.5 does not implement a command to get the current position Use the angle that can be obtained in reply when sending a position command
+def krs_getPos35_CMD(servo_id):
+   
+    #To get the current position with the return value of the position command, get the return value from the servo at position 0.
+    Value = krs_setPos_CMD(servo_id, 0)
+        
+    #Send the same position as the obtained position to the servo in the free state and return it to the torque-on state
+    Value = krs_setPos_CMD(servo_id, Value)
+    
+    return Value
+
+
+
+#サーボのストレッチ、スピード、電流制限値、温度制限値を書き換えます
+#※EEPROM(sc:0x00)の書き込みには対応していません
+def krs_setValue(servo_id, sc, Value):
+    
+    #サブコマンドがEEPROM(sc:0x00)の場合は処理を停止する
+    if (sc == 0x00) :
+        return False
+    
+    txCmd = [0xC0 | servo_id,   #書き込みコマンド0ｘC0にＩＤ番号を足し合わせてヘッダにします
+             sc,                #sc（サブコマンド）により、書き込み先を指定します
+             Value]             #書き込むパラメータ
+   
+    #コマンドを送信
+    krs.write(txCmd)
+
+    #サーボからの返事を受け取る
+    rxCmd = krs.read(6)
+    
+    #もしリスト何になにも入っていなかったら正常に受信できていないと判断    
+    if len(rxCmd) == 0:
+        return False
+
+    #問題なければ返事を返す
+    else:
+        
+        #サーボからの返事で書き込んだデータが返ってきます。指定したデータと合っているか確認します
+        if rxCmd[5] == Value:
+            return True
+        
+        else:
+            return False
+
+
+
+#Read the ID of the servo Use the host and servo in a one-to-one situation ID cannot be read by connecting multiple servos at the same time
+def krs_getID_CMD():
+    
+    txCmd = [0xFF,  #ID command 0xFF
+             0x00,  #Send the ID read subcommand 0x00 3 times.
+             0x00,
+             0x00]
+   
+    #Send Command
+    krs.write(txCmd)
+
+    #Receive a reply from the servo
+    rxCmd = krs.read(5)
+  
+    
+    #If there is nothing in the list, it is judged that it cannot be received normally. 
+    if len(rxCmd) == 0:
+        return 0
+
+    #If there is no problem, reply
+    else:
+        
+        #Leave only the ID from the read and return value
+        return rxCmd[4] & 0x1F
+
+
+
+
+#Subcommands for reading and writing
+STRETCH = 0x01          #Stretch (parameter that specifies the holding force of the servo) 
+SPEED = 0x02            #Speed * Lowering the speed parameter also lowers the torque. 
+CURRENT = 0x03          #Current value (current limit value when writing) Temperature (temperature limit value when writing
+TEMPERATURE = 0x04      
+
+#If the threshold values of the current limit value and temperature limit value are exceeded, the servo will lose power. If it falls below the threshold, it will return
+#※KRS-3301/3302は温度、電流回路が実装されていません
+
+#If you write the wrong value to the EEPROM, it will not work properly. To change EEPROM data, please use the ICS3.5/3.6 Manager.
+#https://kondo-robot.com/faq/ics35mag
+
+
+#COMポートを開く
+krs = serial.Serial('/dev/ttyAMA0', baudrate=115200, parity=serial.PARITY_EVEN, timeout=0.5)
+
+"""
+#サブコマンド(sc)で指定したパラメータを書き換えます
+#krs_setValue(servo_id, sc, Value)
+reData = krs_setValue(0, STRETCH, 60)
+print(reData)
+
+reData = krs_setValue(0, SPEED, 127)
+print(reData)
+
+
+#サブコマンド(sc)で指定したパラメータを読み出します
+#krs_getValue_CMD(servo_id, sc)
+bl, reData = krs_getValue_CMD(0, STRETCH)
+print("STRC", reData)
+
+bl, reData = krs_getValue_CMD(0, SPEED)
+print("SPD", reData)
+
+bl, reData = krs_getValue_CMD(0, CURRENT)
+print("CUR", reData)
+
+bl, reData = krs_getValue_CMD(0, TEMPERATURE)
+print("TMP", reData)
+
+#サーボのIDを読み出します
+bl, reData = krs_getID_CMD()
+print("ID", reData)
+"""
+
+
+#IDで指定したサーボにポジション（角度）を指定し動作します
+#動作角指定範囲
+#POS:3500=7500~11500
+#角度:-135°～0°～135°
+
+#for x in range(7500,11500,30):
+ #   reData = krs_setPos_CMD(4,x)
+  #  time.sleep(0.1)
+
+
+reData = krs_setPos_CMD(4,7560)   #135°へ移動
+time.sleep(2.0)     #サーボが目標位置に到着するまで少し待ちます
+
+#reData = krs_setPos_CMD(8,6000)    #-135°へ移動
+#print(reData)
+
+#time.sleep(2.0)
+
+#reData = krs_setPos_CMD(4,6000)    #0°（中心位置/ニュートラル位置）へ移動
+#print(reData)
+
+#time.sleep(2.0)
+
+#reData = krs_setPos_CMD(4,7500)    #0°（中心位置/ニュートラル位置）へ移動
+#print(reData)
+
+#time.sleep(2.0)
+
+#reData = krs_setPos_CMD(8,7500)    #0°（中心位置/ニュートラル位置）へ移動
+#print(reData)
+
+#time.sleep(2.0)
+
+
+#サーボの現在位置を取得します（ICS3.6の場合）
+#bl, reData = krs_getPos36_CMD(0)
+#print("POS36", reData)
+
+#サーボの現在位置を取得します（ICS3.5の場合）
+#bl, reData = krs_getPos35_CMD(0)
+#print("POS35", reData)
+
+
+#サーボを脱力した状態にします
+#bl, reData = krs_setFree_CMD(0)
+#print(reData)
+#reData = krs_getID_CMD()
+#print("ID", reData)
+
+#ポートを閉じる
+
+krs.close()
+GPIO.cleanup()
