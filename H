@@ -1,0 +1,25 @@
+import serial
+import time
+#import RPi.GPIO as GPIO
+# GPIO.setmode(GPIO.BCM)
+# GPIO.setup(23,GPIO.OUT)
+# GPIO.output(23,GPIO.HIGH)
+
+
+
+
+krs = serial.Serial('/dev/ttyAMA0', baudrate=115200, parity=serial.PARITY_EVEN, timeout=0.5)
+
+tx_commands = [
+    [0x81, 0x3A, 0x4C],  # 4
+    [0x88, 0x3A, 0x4C],  # 8
+    [0x8C, 0x3A, 0x4C],  # 12
+    [0x8E, 0x3A, 0x4C],  # 14
+    [0x8F, 0x3A, 0x4C],  # 16
+    [0x92, 0x3A, 0x4C],  # 18
+    [0x94, 0x3A, 0x4C]   # 20
+]
+
+for cmd in tx_commands:
+    redata =  krs.write(cmd)
+    time.sleep(0.1)
