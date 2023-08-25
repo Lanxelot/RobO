@@ -1,77 +1,145 @@
 import serial
 import time
 import RPi.GPIO as GPIO
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(23,GPIO.OUT)
-GPIO.output(23,GPIO.HIGH)
 
-
-krs = serial.Serial('/dev/ttyAMA0', baudrate=115200, parity=serial.PARITY_EVEN, timeout=0.5)
-
-tx_commands = [
-    [0x84, 0x3A, 0x4C],  # 4
-    [0x85, 0x3A, 0x4C],  # 5
-    [0x88, 0x3A, 0x4C],  # 8
-    [0x89, 0x3A, 0x4C],  # 9
-    [0x8C, 0x3A, 0x4C],  # 12
-    [0x8D, 0x3A, 0x4C],  # 13
-    [0x8E, 0x3A, 0x4C],  # 14
-    [0x8F, 0x3A, 0x4C],  # 15
-    [0x90, 0x3A, 0x4C],  # 16
-    [0x91, 0x3A, 0x4C],  # 17
-    [0x92, 0x3A, 0x4C],  # 18
-    [0x93, 0x3A, 0x4C],  # 19
-    [0x94, 0x3A, 0x4C],   # 20
-    [0x95, 0x3A, 0x4C]   # 21
-]
-
-
-
-#for cmd in tx_commands:  
- #   redata =  krs.write(cmd)
-  #  print("Done")
-   # time.sleep(2)
-
-#Read the current position of the servo Because ICS3.5 does not implement a command to get the current position Use the angle that can be obtained in reply when sending a position command
-def krs_getPos_CMD(servo_id):
-   
-    #To get the current position with the return value of the position command, get the return value from the servo at position 0.
-    Value = krs_setPos_CMD(servo_id, 0)
-        
-    #Send the same position as the obtained position to the servo in the free state and return it to the torque-on state
-    Value = krs_setPos_CMD(servo_id, Value)
+class ServoController:
     
-    return Value
-    
-#It operates by specifying the angle of the servo specified by the number.
-def krs_setPos_CMD(joint):
-	
-	
-	for cmd in joint:
-		time_st = time.time()
-		servo_id,pos = cmd
-		txCmd = [0x80 | servo_id,   #Add the ID number to the position command 0x80 to form a header.
-             pos >> 7 & 0x7f,   #Split position data into 2 bytes
-             pos & 0x7f]
-     
-		krs.write(txCmd)
-		time.sleep(0.1)
-		#rxCmd = krs.read()
-		#print(rxCmd)
-		#r = ''.join(format(byte,'08b') for byte in rxCmd)
-		#print(r)
-		time_t = time.time()
-		print((time_t - time_st))
-	
-	
-	
-#    if len(rxCmd) == 0:
-#    return 0
+     def __init__(self):
+        self.krs = serial.Serial(serial_port='/dev/ttyAMA0', baudrate=115200, parity=serial.PARITY_EVEN, timeout=0.5)
+        self.Arduino =  serial.Serial(serial_port='/dev/ttyACM0', baudrate=9600, parity=serial.PARITY_EVEN, timeout=0.5)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(23, GPIO.OUT)
+        GPIO.output(23, GPIO.HIGH)
+
+    def __del__(self):
+        self.krs.close()
+        GPIO.cleanup()
+
+
+    def execute_function(self,degrees):
+
+        self.servo_value = []
+        for y in degrees:
+            self.input_min = -135
+            self.input_max = 135
+
+            # Output range: 3500 to 11500
+            self.output_min = 3500
+            self.output_max = 11500
+
+            # Map the input degrees to output values
+            self.output_range = self.output_max - self.output_min
+            self.input_range = self.input_max - self.input_min
+
+            self.scaled_value = (y - self.input_min) / self.input_range
+            self.mapped_value = int(self.output_min + (self.scaled_value * self.output_range))
+            if y == 0:
+                self.mapped_value = 7500  
+            self.servo_value.append(self.mapped_value)
+        # print(self.servo_value)
+            # print("{0}:{1}".format(y,self.mapped_value))
+
+        self.target_servos = [4, 5, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        self.joint_cmd = []
+        # Map input values to output servo IDs
+        x = 0
+        for value in self.servo_value:
+            if x <= 13:
+                self.joint_cmd.append(tuple((self.target_servos[x],value)))
+                x = x+1
+            elif x > 13:
+                x = 0
+        
+        self.krs_setPos_CMD(self.joint_cmd)
 
         
-#    else:
-#        return (rxCmd[4] << 7) + rxCmd[5]
+    def krs_setPos_CMD(self,joint_cmd):
+        for tup in joint_cmd:
+            servo_id,pos = tup
+            print("{0},{1}".format(servo_id,pos))
+            # txCmd = [0x80 | servo_id,
+            #      pos >> 7 & 0x7f,
+            #      pos & 0x7f]
+            # self.krs.write(txCmd)
+            # time.sleep(0.1)
+            # rxCmd = self.krs.read()
+            # if len(rxCmd) == 0:
+            #     return 0
+            # else:
+            #     return (rxCmd[4] << 7) + rxCmd[5]
+
         
-     
-joint_cmd = [(9,SECOND) for SECOND in range(4000,10000,30)]
-krs_setPos_CMD(joint_cmd)	
+
+    def krs_getPos_CMD(self, servo_id):
+        value = self.krs_setPos_CMD(servo_id, 0)
+        value = self.krs_setPos_CMD(servo_id, value)
+        return value
+
+    def Home_Pose(self):
+        Home_Pos_cmd = [(4,7500),(5,7500),(8,7500),(9,7500),(12,7500),(13,7500),(14,7500),(15,7500),(16,7500),(17,7500),(18,7500),(19,7500),(20,7500),(21,7500)]
+        self.krs_setPos_CMD(Home_Pos_cmd)
+
+
+    def IMU_sensor(self):
+        s = [0,1]
+        while True:
+            read_serial=ser.readline()
+            s[0] = str(int (ser.readline(),16))
+            print (s[0])
+            print (read_serial)
+
+    def read_current(self,servo_id):
+        txCmd = [0xA0 | servo_id,
+                 0x03]
+        self.krs.write(txCmd)
+        time.sleep(0.1)
+        rxCmd = self.krs.read(5)
+        if len(rxCmd) == 0:
+            return 0
+        else:
+            return rxCmd[4]
+
+    def read_Temp(self,servo_id):
+        txCmd = [0xA0 | servo_id,
+                 0x04]
+        self.krs.write(txCmd)
+        time.sleep(0.1)
+        rxCmd = self.krs.read(5)
+        if len(rxCmd) == 0:
+            return 0
+        else:
+            return rxCmd[4]
+
+    def read_Speed(self,servo_id):
+        txCmd = [0xA0 | servo_id,
+                 0x02]
+        self.krs.write(txCmd)
+        time.sleep(0.1)
+        rxCmd = self.krs.read(5)
+        if len(rxCmd) == 0:
+            return 0
+        else:
+            return rxCmd[4]
+    
+    def read_Stretch(self,servo_id):
+        txCmd = [0xA0 | servo_id,
+                 0x01]
+        self.krs.write(txCmd)
+        time.sleep(0.1)
+        rxCmd = self.krs.read(5)
+        if len(rxCmd) == 0:
+            return 0
+        else:
+            return rxCmd[4]
+            
+    def Foot_sensor(self):
+        pass
+
+
+
+if __name__ == "__main__":
+    controller = ServoController()
+    number_list = list(range(-135, 136))
+    c = controller.execute_function(number_list)
+    print(c)
+    
